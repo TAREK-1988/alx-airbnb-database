@@ -1,6 +1,5 @@
-cd ~/alx-airbnb-database
+cp database-adv-script/database_index.sql database-adv-script/database_index.sql.bak
 
-# OVERWRITE the file with a safe version (no 'country', with column checks)
 cat > database-adv-script/database_index.sql <<'SQL'
 /* ===========================================================
  Task 3 — Implement Indexes for Optimization (PostgreSQL)
@@ -97,6 +96,3 @@ CREATE INDEX IF NOT EXISTS idx_reviews_property_id         ON reviews(property_i
 CREATE INDEX IF NOT EXISTS idx_payments_booking_id         ON payments(booking_id);
 CREATE INDEX IF NOT EXISTS idx_payments_paid_at            ON payments(paid_at);
 SQL
-
-# sanity check: confirm no 'country' appears
-grep -n "country" database-adv-script/database_index.sql || echo "OK: no 'country' in file"
