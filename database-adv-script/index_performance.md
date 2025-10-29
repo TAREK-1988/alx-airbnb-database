@@ -1,65 +1,102 @@
-# Task 3 — Implement Indexes for Optimization (Performance Report)
+# Index Performance Report — ALX Airbnb Database
 
-**Repo/Dir/File:** `alx-airbnb-database/database-adv-script/index_performance.md`  
-**Objective:** Identify high-usage columns and create indexes (in `database_index.sql`), then measure query performance **before/after** using `EXPLAIN/ANALYZE`.
+**Date:** (fill)
+**DB Engine:** PostgreSQL
+**Dataset Size:** (rows per table)
+
+## Queries Measured
+1. **User lookup by email**
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, email, created_at FROM users WHERE email = 'alice@example.com';
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT b.* FROM bookings b WHERE b.user_id = $USER_ID ORDER BY b.start_date DESC LIMIT 20;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT 1
+FROM bookings b
+WHERE b.property_id = $PROPERTY_ID
+AND b.status = 'confirmed'
+AND b.start_date < DATE '2025-12-31'
+AND b.end_date > DATE '2025-12-20'
+LIMIT 1;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, city, country, price_per_night
+FROM properties
+WHERE country = 'Spain' AND city = 'Madrid'
+ORDER BY price_per_night ASC
+LIMIT 50;
+
+Query	Before Plan	Before Time	After Plan	After Time	Delta
+1	Seq Scan	
+Index Scan	
+
+2	Seq+Sort	
+Index Scan	
+
+3	Seq Scan	
+Index Scan	
+
+4	Seq+Filesort	
+Index Range	
+
 
 ---
 
-## 0) What was indexed (DDL lives in `database_index.sql`)
-> Run this first to create the indexes, then re-run the benchmarks.
+## 6) `perfomance.sql`
 
 ```sql
--- From psql:
-\i database-adv-script/database_index.sql
-ANALYZE;
+-- ================================================
+-- 4. Complex query (initial + refactored hints)
+-- File: database-adv-script/perfomance.sql
+-- ================================================
+SET search_path = public;
 
-\timing on
--- BEFORE: run queries below and note timings
--- AFTER: run the DDL above, then re-run and note timings
+-- Assumed extra table:
+-- payments(id PK, booking_id FK, amount, status, paid_at)
 
-SELECT u.user_id, u.name, COUNT(b.booking_id) AS total_bookings
-FROM users u
-LEFT JOIN bookings b ON b.user_id = u.user_id
-GROUP BY u.user_id, u.name;
+-- A) Initial (possibly naive) query
+-- Retrieves bookings with user details, property details, and payment details
+-- Intentionally verbose to allow optimization during review
 
-SELECT p.property_id
-FROM properties p
-WHERE (
-  SELECT AVG(r.rating)
-  FROM bookings b
-  JOIN reviews r ON r.booking_id = b.booking_id
-  WHERE b.property_id = p.property_id
-) > 4.0;
+-- Tip for review: run EXPLAIN (ANALYZE, BUFFERS) on both versions
 
-SELECT b.booking_id, b.checkin, b.checkout,
-       u.user_id, u.name,
-       p.property_id, p.city,
-       pay.amount
+-- Initial version (may over-join and select more columns than needed)
+SELECT b.id AS booking_id,
+b.start_date,
+b.end_date,
+b.status AS booking_status,
+u.id AS user_id,
+u.full_name,
+u.email,
+p.id AS property_id,
+p.title AS property_title,
+pay.id AS payment_id,
+pay.amount,
+pay.status AS payment_status,
+pay.paid_at
 FROM bookings b
-JOIN users u      ON u.user_id = b.user_id
-JOIN properties p ON p.property_id = b.property_id
-LEFT JOIN payments pay ON pay.booking_id = b.booking_id
-WHERE b.status = 'confirmed'
-  AND b.checkin >= CURRENT_DATE - INTERVAL '180 days';
+JOIN users u ON u.id = b.user_id
+JOIN properties p ON p.id = b.property_id
+LEFT JOIN payments pay ON pay.booking_id = b.id;
 
-| Query | Before (ms) | After (ms) | Plan change (summary)                                      | Notes  |
-| ----: | ----------: | ---------: | ---------------------------------------------------------- | ------ |
-|    Q1 |         120 |         18 | Seq Scan → Hash Join + **Index Scan on bookings(user_id)** | sample |
-|    Q2 |         210 |         95 | Subquery sped up via **reviews(booking_id, created_at)**   | sample |
-|    Q3 |         780 |        110 | **Index Scan on (checkin, checkout)**; fewer rows read     | sample |
-
-EXPLAIN (ANALYZE, BUFFERS)
-SELECT u.user_id, u.name, COUNT(b.booking_id) AS total_bookings
-FROM users u
-LEFT JOIN bookings b ON b.user_id = u.user_id
-GROUP BY u.user_id, u.name;
-
-EXPLAIN (ANALYZE, BUFFERS)
-SELECT b.booking_id, b.checkin, b.checkout, u.user_id, u.name, p.property_id, p.city, pay.amount
-FROM bookings b
-JOIN users u      ON u.user_id = b.user_id
-JOIN properties p ON p.property_id = b.property_id
-LEFT JOIN payments pay ON pay.booking_id = b.booking_id
-WHERE b.status = 'confirmed'
-  AND b.checkin >= CURRENT_DATE - INTERVAL '180 days';
-
+-- B) A more selective refactor (pattern):
+-- - Restrict selected columns
+-- - Filter early (WHERE) to prune rows prior to joins
+-- - Ensure supporting indexes exist (see database_index.sql)
+-- Example filter placeholders
+-- SELECT ...
+-- FROM bookings b
+-- JOIN users u ON u.id = b.user_id
+-- JOIN properties p ON p.id = b.property_id
+-- LEFT JOIN LATERAL (
+-- SELECT pay.*
+-- FROM payments pay
+-- WHERE pay.booking_id = b.id
+-- ORDER BY pay.paid_at DESC
+-- LIMIT 1
+-- ) pay ON TRUE
+-- WHERE b.status = 'confirmed'
+-- AND b.start_date >= CURRENT_DATE - INTERVAL '180 days';
