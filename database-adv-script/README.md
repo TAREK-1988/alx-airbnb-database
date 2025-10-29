@@ -1,15 +1,15 @@
-# Task 0 — Write Complex Queries with Joins
+# Advanced Database Scripts — Unleashing Advanced Querying Power
 
-This folder contains scripts for the **Unleashing Advanced Querying Power** module.
-
-## Files
-- `joins_queries.sql`: contains three queries:
-  - INNER JOIN: bookings × users
-  - LEFT JOIN: properties × (bookings → reviews), includes properties with no reviews
-  - FULL OUTER JOIN: users ↔ bookings (with MySQL UNION fallback in comments)
+This folder contains the deliverables for the Advanced Module.
 
 ## How to Run (PostgreSQL)
 ```sql
-\i database-adv-script/joins_queries.sql
 \timing on
-EXPLAIN (ANALYZE, BUFFERS) <paste query>;
+-- Run any file:
+\i database-adv-script/joins_queries.sql
+\i database-adv-script/subqueries.sql
+\i database-adv-script/aggregations_and_window_functions.sql
+\i database-adv-script/performance.sql
+\i database-adv-script/partitioning.sql
+-- For plans:
+EXPLAIN (ANALYZE, BUFFERS) <your query>;
