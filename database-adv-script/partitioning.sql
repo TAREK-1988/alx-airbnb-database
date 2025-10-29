@@ -1,16 +1,14 @@
 /* ===========================================================
- Task 5 — Partitioning the bookings table by start_date (PostgreSQL 16)
- Safe migration without breaking existing FKs:
- - keep original bookings as-is
- - create bookings_partitioned (parent) + yearly partitions
- - copy data
- - provide a read-only view bookings_all (union of partitions)
+ Task 5 — Partition bookings by start_date (PostgreSQL 16)
+ Safe plan: keep original `bookings`, create `bookings_partitioned`,
+ copy data, and expose a view `bookings_all`.
+ Schema assumptions (from your repo):
+   bookings(booking_id UUID PK, user_id UUID, property_id UUID,
+            status TEXT, checkin DATE, checkout DATE, created_at TIMESTAMP)
+   users(user_id UUID), properties(property_id UUID)
 =========================================================== */
 
--- 0) Ensure extension for gen UUID if needed (optional)
--- CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
--- 1) Add start_date if missing (generated from checkin)
+-- 0) Ensure start_date exists on original bookings (generated from checkin)
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -22,9 +20,7 @@ BEGIN
   END IF;
 END $$;
 
--- 2) Create partitioned parent table (same columns subset; adjust types to your schema)
--- Note: we don't drop/rename original bookings to avoid breaking FKs.
--- You can later switch application reads to the view (bookings_all).
+-- 1) Create partitioned parent (drop old copy if present)
 DROP TABLE IF EXISTS bookings_partitioned CASCADE;
 CREATE TABLE bookings_partitioned (
   booking_id   UUID PRIMARY KEY,
@@ -33,34 +29,33 @@ CREATE TABLE bookings_partitioned (
   status       TEXT,
   checkin      DATE,
   checkout     DATE,
-  start_date   DATE NOT NULL,          -- partition key
+  start_date   DATE NOT NULL,   -- partition key
   created_at   TIMESTAMP
 ) PARTITION BY RANGE (start_date);
 
--- (Optional) Recreate FKs on the parent (they will apply logically to inserts):
+-- 2) Foreign keys on the parent (optional but useful)
 ALTER TABLE bookings_partitioned
-  ADD CONSTRAINT fk_bookings_user
+  ADD CONSTRAINT fk_bp_user
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE;
 
 ALTER TABLE bookings_partitioned
-  ADD CONSTRAINT fk_bookings_property
+  ADD CONSTRAINT fk_bp_property
     FOREIGN KEY (property_id) REFERENCES properties(property_id) ON DELETE CASCADE;
 
--- 3) Yearly partitions (adjust ranges to your dataset window)
--- 2024
+-- 3) Yearly partitions (adjust ranges as needed)
 CREATE TABLE IF NOT EXISTS bookings_p_2024 PARTITION OF bookings_partitioned
   FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
--- 2025
+
 CREATE TABLE IF NOT EXISTS bookings_p_2025 PARTITION OF bookings_partitioned
   FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
--- 2026
+
 CREATE TABLE IF NOT EXISTS bookings_p_2026 PARTITION OF bookings_partitioned
   FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
--- default (anything outside the above ranges)
+
+-- default partition (anything outside defined ranges)
 CREATE TABLE IF NOT EXISTS bookings_p_default PARTITION OF bookings_partitioned DEFAULT;
 
--- 4) Indexes per-partition (Postgres requires per-partition indexes)
--- Note: create the same set of indexes you rely on
+-- 4) Indexes per partition (match common joins/filters)
 CREATE INDEX IF NOT EXISTS idx_b2024_user_id       ON bookings_p_2024(user_id);
 CREATE INDEX IF NOT EXISTS idx_b2025_user_id       ON bookings_p_2025(user_id);
 CREATE INDEX IF NOT EXISTS idx_b2026_user_id       ON bookings_p_2026(user_id);
@@ -81,23 +76,21 @@ CREATE INDEX IF NOT EXISTS idx_b2025_checkin_out   ON bookings_p_2025(checkin, c
 CREATE INDEX IF NOT EXISTS idx_b2026_checkin_out   ON bookings_p_2026(checkin, checkout);
 CREATE INDEX IF NOT EXISTS idx_bdef_checkin_out    ON bookings_p_default(checkin, checkout);
 
--- 5) Copy data from the original table into partitions
--- Make sure column order matches
+-- 5) Copy existing data into partitions
 INSERT INTO bookings_partitioned (booking_id, user_id, property_id, status, checkin, checkout, start_date, created_at)
 SELECT booking_id, user_id, property_id, status, checkin, checkout, start_date, created_at
 FROM bookings;
 
--- 6) Optional but recommended: analyze for fresh stats
+-- 6) Analyze for fresh stats
 VACUUM (ANALYZE) bookings_partitioned;
 VACUUM (ANALYZE) bookings_p_2024;
 VACUUM (ANALYZE) bookings_p_2025;
 VACUUM (ANALYZE) bookings_p_2026;
 VACUUM (ANALYZE) bookings_p_default;
 
--- 7) Read-only compatibility view to query all partitioned data
+-- 7) Compatibility view to read from partitioned data
 DROP VIEW IF EXISTS bookings_all;
 CREATE VIEW bookings_all AS
 SELECT * FROM bookings_partitioned;
 
--- Tip: For app code, you can switch reads from "bookings" -> "bookings_all"
--- without touching existing FKs on the original "bookings".
+-- Done.
