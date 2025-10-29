@@ -1,0 +1,1 @@
+-- TODO: Task 2 aggregations & window functions (placeholder)
